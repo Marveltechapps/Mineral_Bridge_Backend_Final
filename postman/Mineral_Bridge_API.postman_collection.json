@@ -1,0 +1,730 @@
+{
+  "info": {
+    "name": "Mineral Bridge API",
+    "description": "All backend endpoints for testing. Run 1–3 (Auth) first to get token, then use it in other requests.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000" },
+    { "key": "token", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "0. Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/health"
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Auth (get token first)",
+      "item": [
+        {
+          "name": "Send OTP",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"countryCode\": \"+1\",\n  \"phone\": \"9876543210\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/send-otp"
+          }
+        },
+        {
+          "name": "Verify OTP",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"countryCode\": \"+1\",\n  \"phone\": \"9876543210\",\n  \"otp\": \"123456\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/verify-otp"
+          }
+        },
+        {
+          "name": "Register or Login (save token from response)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.token) pm.collectionVariables.set('token', json.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"countryCode\": \"+1\",\n  \"phone\": \"9876543210\",\n  \"name\": \"Test User\",\n  \"email\": \"test@mineralbridge.com\",\n  \"location\": { \"lat\": 9.0, \"lng\": 38.7 }\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/register-or-login"
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Public (no auth)",
+      "item": [
+        {
+          "name": "Minerals List",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/minerals"
+          }
+        },
+        {
+          "name": "Minerals List by category",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/minerals?category=Precious Metals"
+          }
+        },
+        {
+          "name": "Mineral by ID",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/minerals/gold"
+          }
+        },
+        {
+          "name": "Market Insights",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/market-insights"
+          }
+        },
+        {
+          "name": "Help FAQs",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/help/faqs"
+          }
+        },
+        {
+          "name": "Help Categories",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/help/categories"
+          }
+        },
+        {
+          "name": "Artisanal Eligibility",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/artisanal/eligibility?country=Ghana"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Users (auth)",
+      "item": [
+        {
+          "name": "Get Me",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/users/me"
+          }
+        },
+        {
+          "name": "Patch Me",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test User Updated\",\n  \"email\": \"updated@mineralbridge.com\"\n}"
+            },
+            "url": "{{baseUrl}}/api/users/me"
+          }
+        },
+        {
+          "name": "Patch Profile (avatar)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"avatarUrl\": \"https://example.com/avatar.jpg\"\n}"
+            },
+            "url": "{{baseUrl}}/api/users/me/profile"
+          }
+        },
+        {
+          "name": "Get Security",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/users/me/security"
+          }
+        },
+        {
+          "name": "Patch Security (2FA)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"twoFactorEnabled\": true\n}" },
+            "url": "{{baseUrl}}/api/users/me/security"
+          }
+        },
+        {
+          "name": "Get Sessions",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/users/me/sessions"
+          }
+        },
+        {
+          "name": "Post Session",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"deviceName\": \"Postman\"\n}" },
+            "url": "{{baseUrl}}/api/users/me/sessions"
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. KYC (auth)",
+      "item": [
+        {
+          "name": "Post KYC Documents",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idType\": \"National ID\",\n  \"frontUrl\": \"https://example.com/id-front.jpg\",\n  \"backUrl\": \"https://example.com/id-back.jpg\",\n  \"selfieUrl\": \"https://example.com/selfie.jpg\"\n}"
+            },
+            "url": "{{baseUrl}}/api/kyc/documents"
+          }
+        },
+        {
+          "name": "Submit KYC",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/kyc/submit"
+          }
+        },
+        {
+          "name": "Get KYC Status",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/kyc/status"
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Addresses (auth)",
+      "item": [
+        {
+          "name": "Get Addresses",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/addresses"
+          }
+        },
+        {
+          "name": "Post Address",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"Warehouse A\",\n  \"facilityName\": \"Export Warehouse A\",\n  \"street\": \"123 Mineral St\",\n  \"city\": \"Addis Ababa\",\n  \"state\": \"Addis Ababa\",\n  \"country\": \"Ethiopia\",\n  \"postalCode\": \"1000\",\n  \"phone\": \"+251911234567\",\n  \"institutionalPermitNumber\": \"ET-EXP-2026\",\n  \"regulatoryCompliance\": true,\n  \"isDefault\": true\n}"
+            },
+            "url": "{{baseUrl}}/api/addresses"
+          }
+        },
+        {
+          "name": "Patch Address",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"Warehouse A Updated\",\n  \"phone\": \"+251911999999\"\n}"
+            },
+            "url": "{{baseUrl}}/api/addresses/ADDRESS_ID_HERE"
+          }
+        },
+        {
+          "name": "Delete Address",
+          "request": {
+            "method": "DELETE",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/addresses/ADDRESS_ID_HERE"
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Orders (auth)",
+      "item": [
+        {
+          "name": "Post Order (Buy)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mineralId\": \"gold\",\n  \"mineralName\": \"Gold\",\n  \"quantity\": 10,\n  \"amount\": \"24000\",\n  \"addressId\": \"USE_ADDRESS_ID_FROM_GET_ADDRESSES\",\n  \"type\": \"buy\",\n  \"mineralType\": \"raw\",\n  \"buyerCategory\": \"Supplier\",\n  \"deliveryMethod\": \"Direct Delivery\",\n  \"subtotal\": 24000,\n  \"transportFee\": 500,\n  \"feePercent\": 1,\n  \"totalDue\": 24740\n}"
+            },
+            "url": "{{baseUrl}}/api/orders"
+          }
+        },
+        {
+          "name": "Get Orders",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/orders"
+          }
+        },
+        {
+          "name": "Get Orders (buy only)",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/orders?type=buy"
+          }
+        },
+        {
+          "name": "Get Order by ID",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/orders/ORDER_ID_HERE"
+          }
+        },
+        {
+          "name": "Patch Order (advance step)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"step\": 2\n}" },
+            "url": "{{baseUrl}}/api/orders/ORDER_ID_HERE"
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Listings (auth)",
+      "item": [
+        {
+          "name": "Post Listing",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mineralId\": \"gold\",\n  \"category\": \"Precious Metals\",\n  \"quantity\": 500,\n  \"unit\": \"kg\",\n  \"type\": \"raw\",\n  \"buyerType\": \"Refinery\",\n  \"origin\": \"Ghana\",\n  \"originYear\": 2025,\n  \"photos\": [\"https://example.com/mineral1.jpg\"],\n  \"pickupMethod\": \"Pickup\",\n  \"aiEstimatedPayout\": 120000,\n  \"sampleTestRequired\": true\n}"
+            },
+            "url": "{{baseUrl}}/api/listings"
+          }
+        },
+        {
+          "name": "Get Listings (mine)",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/listings?mine=1"
+          }
+        },
+        {
+          "name": "Get Listing by ID",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/listings/LISTING_ID_HERE"
+          }
+        },
+        {
+          "name": "Patch Listing",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"pending\",\n  \"quantity\": 600\n}" },
+            "url": "{{baseUrl}}/api/listings/LISTING_ID_HERE"
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Notifications (auth)",
+      "item": [
+        {
+          "name": "Get Notifications",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/notifications"
+          }
+        },
+        {
+          "name": "Get Unread Only",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/notifications?unreadOnly=1"
+          }
+        },
+        {
+          "name": "Post Notification",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Order MB-ORDER-12345 updated\",\n  \"body\": \"Your order is now in Contact step.\"\n}"
+            },
+            "url": "{{baseUrl}}/api/notifications"
+          }
+        },
+        {
+          "name": "Patch Mark Read",
+          "request": {
+            "method": "PATCH",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/notifications/NOTIFICATION_ID_HERE/read"
+          }
+        }
+      ]
+    },
+    {
+      "name": "9. Activity (auth)",
+      "item": [
+        {
+          "name": "Get Activity",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/activity"
+          }
+        },
+        {
+          "name": "Post Activity",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"verification\",\n  \"title\": \"Blockchain verification complete\",\n  \"message\": \"Gold batch verified.\"\n}"
+            },
+            "url": "{{baseUrl}}/api/activity"
+          }
+        }
+      ]
+    },
+    {
+      "name": "10. Help Contact (auth)",
+      "item": [
+        {
+          "name": "Post Contact (email)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"email\",\n  \"category\": \"Payments\",\n  \"subject\": \"Payout delay\",\n  \"message\": \"My payout has not arrived.\"\n}"
+            },
+            "url": "{{baseUrl}}/api/help/contact"
+          }
+        },
+        {
+          "name": "Post Contact (callback)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"type\": \"callback\"\n}" },
+            "url": "{{baseUrl}}/api/help/contact"
+          }
+        }
+      ]
+    },
+    {
+      "name": "11. Payment Methods (auth)",
+      "item": [
+        {
+          "name": "Get Payment Methods",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/payment-methods"
+          }
+        },
+        {
+          "name": "Post Bank",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"Bank\",\n  \"holderName\": \"Test User\",\n  \"bankName\": \"Test Bank\",\n  \"accountNumber\": \"1234567890\",\n  \"swift\": \"TESTUS33\"\n}"
+            },
+            "url": "{{baseUrl}}/api/payment-methods"
+          }
+        },
+        {
+          "name": "Post Crypto",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"Crypto\",\n  \"label\": \"Main Wallet\",\n  \"network\": \"TRC-20\",\n  \"address\": \"0x1234567890abcdef\"\n}"
+            },
+            "url": "{{baseUrl}}/api/payment-methods"
+          }
+        },
+        {
+          "name": "Delete Payment Method",
+          "request": {
+            "method": "DELETE",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/payment-methods/PAYMENT_METHOD_ID_HERE"
+          }
+        }
+      ]
+    },
+    {
+      "name": "12. Transactions (auth)",
+      "item": [
+        {
+          "name": "Get Transactions",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/transactions"
+          }
+        },
+        {
+          "name": "Get Transaction by ID",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/transactions/TRANSACTION_ID_HERE"
+          }
+        },
+        {
+          "name": "Post Transaction",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"MB-ORDER-12345\",\n  \"type\": \"Buy\",\n  \"itemName\": \"Gold\",\n  \"subtotal\": 24000,\n  \"serviceFee\": 600,\n  \"networkFee\": 50,\n  \"total\": 24650\n}"
+            },
+            "url": "{{baseUrl}}/api/transactions"
+          }
+        }
+      ]
+    },
+    {
+      "name": "13. App Settings (auth)",
+      "item": [
+        {
+          "name": "Get App Settings",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/app-settings"
+          }
+        },
+        {
+          "name": "Patch App Settings",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"language\": \"en-US\",\n  \"currency\": \"USD\",\n  \"theme\": \"dark\",\n  \"priceAlerts\": true,\n  \"auctionUpdates\": false,\n  \"miningStatus\": true,\n  \"showMarketPredictions\": true\n}"
+            },
+            "url": "{{baseUrl}}/api/app-settings"
+          }
+        }
+      ]
+    },
+    {
+      "name": "14. Artisanal (auth)",
+      "item": [
+        {
+          "name": "Get Profile",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/artisanal/profile"
+          }
+        },
+        {
+          "name": "Post Profile",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"minerType\": \"individual\",\n  \"siteName\": \"Site Alpha\",\n  \"country\": \"Ghana\",\n  \"district\": \"Ashanti\",\n  \"region\": \"Central\",\n  \"village\": \"Village A\",\n  \"miningAreaType\": \"River\",\n  \"mineralType\": \"Gold\",\n  \"method\": \"Manual\",\n  \"yearsExperience\": 5,\n  \"workers\": 10,\n  \"monthlyOutput\": 10,\n  \"outputUnit\": \"kg\",\n  \"equipment\": [\"Crusher\", \"Generator\"],\n  \"licenseNumber\": \"LIC-001\",\n  \"childLaborFree\": true,\n  \"safePractices\": true,\n  \"laborPledgeSigned\": true,\n  \"completionScore\": 100,\n  \"minerStatus\": \"Verified Miner\",\n  \"status\": \"active\"\n}"
+            },
+            "url": "{{baseUrl}}/api/artisanal/profile"
+          }
+        },
+        {
+          "name": "Get Safety Training",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/artisanal/safety-training"
+          }
+        },
+        {
+          "name": "Patch Safety Training",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"moduleId\": \"advanced-tools\",\n  \"status\": \"completed\"\n}"
+            },
+            "url": "{{baseUrl}}/api/artisanal/safety-training"
+          }
+        },
+        {
+          "name": "Get Equipment Requests",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/artisanal/equipment-requests"
+          }
+        },
+        {
+          "name": "Post Equipment Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"itemName\": \"Pneumatic Drill Unit\"\n}" },
+            "url": "{{baseUrl}}/api/artisanal/equipment-requests"
+          }
+        },
+        {
+          "name": "Get Certifications",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/artisanal/certifications"
+          }
+        },
+        {
+          "name": "Get Incident Reports",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": "{{baseUrl}}/api/artisanal/incident-reports"
+          }
+        },
+        {
+          "name": "Post Incident Report",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"category\": \"Safety\",\n  \"description\": \"Minor equipment fault.\",\n  \"photoUrl\": \"https://example.com/photo.jpg\"\n}"
+            },
+            "url": "{{baseUrl}}/api/artisanal/incident-reports"
+          }
+        }
+      ]
+    }
+  ]
+}

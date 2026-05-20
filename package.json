@@ -1,0 +1,44 @@
+{
+  "name": "mineral-bridge-api",
+  "version": "1.0.0",
+  "description": "Mineral Bridge API - Buy module minerals",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "seed": "node seed/seed.js",
+    "ensure-indexes": "node scripts/ensure-indexes.js",
+    "migrate-db": "node scripts/migrate-mongo-mineral-bridge.js",
+    "seed-demo-admin": "node scripts/upsert-demo-admin.js",
+    "seed-insights": "node scripts/seed-market-insights.js",
+    "test": "jest --verbose",
+    "test:unit": "jest --verbose __tests__/unit/",
+    "test:integration": "jest --verbose __tests__/integration/",
+    "test:coverage": "jest --coverage"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1000.0",
+    "@aws-sdk/s3-request-presigner": "^3.1000.0",
+    "@tensorflow-models/blazeface": "^0.0.7",
+    "@tensorflow/tfjs": "^4.22.0",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "ioredis": "^5.10.0",
+    "jpeg-js": "^0.4.4",
+    "jsonwebtoken": "^9.0.2",
+    "mongodb": "^6.3.0",
+    "multer": "^2.1.0",
+    "nodemailer": "^6.10.1",
+    "resend": "^4.8.0",
+    "twilio": "^5.9.0"
+  },
+  "devDependencies": {
+    "jest": "^30.2.0",
+    "supertest": "^7.2.2"
+  },
+  "optionalDependencies": {
+    "@tensorflow/tfjs-node": "^4.22.0"
+  }
+}

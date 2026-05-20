@@ -1,0 +1,90 @@
+# =========================
+# Dependencies / builds
+# =========================
+node_modules/
+dist/
+build/
+.next/
+out/
+
+# =========================
+# Environment / secrets
+# =========================
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Legacy SMS/VIN config (commit config/config.example.json only)
+config/config.json
+
+# =========================
+# Expo local
+# =========================
+.expo/
+
+# =========================
+# Accidental duplicate tree (delete from disk when safe)
+# =========================
+copy-expo-mineral-backend-master/
+
+# =========================
+# Logs / runtime output
+# =========================
+*.log
+logs/
+pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# =========================
+# Tests / coverage
+# =========================
+coverage/
+.nyc_output/
+
+# =========================
+# Caches
+# =========================
+.cache/
+.parcel-cache/
+.turbo/
+.eslintcache
+.jest/
+
+# =========================
+# Local DB dumps / exports
+# =========================
+mongo-dump-mineral-bridge/
+*.dump
+*.sqlite
+*.sqlite3
+
+# =========================
+# Uploads / temp files
+# (commit a placeholder .gitkeep if you need the folder present)
+# =========================
+uploads/
+tmp/
+temp/
+
+# =========================
+# Editor / OS junk
+# =========================
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+Untitled
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+# Cursor (optional)
+# =========================
+.cursorignore
+.cursorrules

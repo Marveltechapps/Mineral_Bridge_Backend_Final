@@ -1,0 +1,326 @@
+{
+  "info": {
+    "name": "Sell Module API",
+    "description": "Check sell screens: run 1. Auth first to get token, then 2–6 in order. Token and IDs (addressId, listingId) are saved automatically for later requests.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000" },
+    { "key": "token", "value": "" },
+    { "key": "addressId", "value": "" },
+    { "key": "listingId", "value": "" },
+    { "key": "orderId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "1. Auth (get token)",
+      "item": [
+        {
+          "name": "Send OTP",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"countryCode\": \"+91\",\n  \"phone\": \"9876543210\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/send-otp"
+          }
+        },
+        {
+          "name": "Verify OTP (saves token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const j = pm.response.json();",
+                  "  if (j.token) pm.collectionVariables.set('token', j.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"countryCode\": \"+91\",\n  \"phone\": \"9876543210\",\n  \"otp\": \"123456\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/verify-otp"
+          }
+        },
+        {
+          "name": "Register or Login (saves token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const j = pm.response.json();",
+                  "  if (j.token) pm.collectionVariables.set('token', j.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"countryCode\": \"+91\",\n  \"phone\": \"9876543210\",\n  \"name\": \"Test Seller\",\n  \"email\": \"seller@example.com\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/register-or-login"
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Minerals (no auth)",
+      "item": [
+        {
+          "name": "GET Minerals (all)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/minerals"
+          }
+        },
+        {
+          "name": "GET Minerals by category",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/minerals?category=Precious Metals"
+          }
+        },
+        {
+          "name": "GET Mineral by id (gold)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/minerals/gold"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Sell Content (no auth)",
+      "item": [
+        {
+          "name": "GET Content Sell",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/content/sell"
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Addresses (auth)",
+      "item": [
+        {
+          "name": "GET Addresses",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": "{{baseUrl}}/api/addresses"
+          }
+        },
+        {
+          "name": "POST Address (saves addressId)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const j = pm.response.json();",
+                  "  if (j.id) pm.collectionVariables.set('addressId', j.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"Pickup Location\",\n  \"facilityName\": \"Test Facility\",\n  \"street\": \"123 Export St\",\n  \"city\": \"Mumbai\",\n  \"stateRegion\": \"Maharashtra\",\n  \"country\": \"India\",\n  \"postalCode\": \"400001\",\n  \"phone\": \"9876543210\",\n  \"email\": \"seller@example.com\",\n  \"institutionalPermitNumber\": \"PERMIT-001\",\n  \"regulatoryCompliance\": true\n}"
+            },
+            "url": "{{baseUrl}}/api/addresses"
+          }
+        },
+        {
+          "name": "PATCH Address",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"facilityName\": \"Test Facility Updated\"\n}"
+            },
+            "url": "{{baseUrl}}/api/addresses/{{addressId}}"
+          }
+        },
+        {
+          "name": "DELETE Address",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": "{{baseUrl}}/api/addresses/{{addressId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Listings (auth)",
+      "item": [
+        {
+          "name": "POST Listing (saves listingId)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const j = pm.response.json();",
+                  "  if (j.id) pm.collectionVariables.set('listingId', j.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mineralId\": \"gold\",\n  \"category\": \"Precious Metals\",\n  \"quantity\": 10,\n  \"unit\": \"grams\",\n  \"type\": \"raw\",\n  \"origin\": \"Mumbai, India\",\n  \"photos\": [],\n  \"documents\": []\n}"
+            },
+            "url": "{{baseUrl}}/api/listings"
+          }
+        },
+        {
+          "name": "GET Listings (mine)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": "{{baseUrl}}/api/listings?mine=1"
+          }
+        },
+        {
+          "name": "GET Listing by ID",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": "{{baseUrl}}/api/listings/{{listingId}}"
+          }
+        },
+        {
+          "name": "PATCH Listing",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"submitted\"\n}"
+            },
+            "url": "{{baseUrl}}/api/listings/{{listingId}}"
+          }
+        },
+        {
+          "name": "DELETE Listing",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": "{{baseUrl}}/api/listings/{{listingId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Orders (auth)",
+      "item": [
+        {
+          "name": "POST Order Sell (saves orderId)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const j = pm.response.json();",
+                  "  if (j.id) pm.collectionVariables.set('orderId', j.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mineralId\": \"gold\",\n  \"mineralName\": \"Gold\",\n  \"quantity\": 10,\n  \"addressId\": \"{{addressId}}\",\n  \"type\": \"sell\",\n  \"listingId\": \"{{listingId}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/orders"
+          }
+        },
+        {
+          "name": "GET Orders (sell)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": "{{baseUrl}}/api/orders?type=sell"
+          }
+        },
+        {
+          "name": "GET Order by ID",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": "{{baseUrl}}/api/orders/{{orderId}}"
+          }
+        },
+        {
+          "name": "PATCH Order",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"step\": 2\n}"
+            },
+            "url": "{{baseUrl}}/api/orders/{{orderId}}"
+          }
+        }
+      ]
+    }
+  ]
+}
