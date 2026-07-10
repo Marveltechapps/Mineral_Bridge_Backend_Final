@@ -1,46 +1,15 @@
 const express = require('express');
-const path = require('path');
-const fs = require('fs');
 const { getDB } = require('../config/db');
-const { checkRateLimit, checkBruteForce, recordFailedAttempt, clearFailedAttempts } = require('../services/otp.service');
+const { checkBruteForce, recordFailedAttempt, clearFailedAttempts } = require('../services/otp.service');
 const { generateAccessToken, generateRefreshToken, verifyToken } = require('../services/jwt.service');
 const { createAlert } = require('./security_alerts');
-const { sendOtpSmsOnly, sendOtpWhatsAppFirst } = require('../services/twilio-otp.service');
+const {
+  deliverPhoneOtp,
+  deliveryFailureMessage,
+  buildPhoneOtpSuccessPayload,
+} = require('../services/phone-otp-delivery.service');
 
 const router = express.Router();
-
-/* ───────── SMS Gateway Config ───────── */
-
-let SMS_VENDOR_URL = '';
-
-function loadSmsVendorUrl() {
-  if (process.env.SMS_VENDOR_URL) return process.env.SMS_VENDOR_URL;
-  if (process.env.smsvendor) return process.env.smsvendor;
-
-  const paths = [
-    path.join(__dirname, '..', '..', 'config (2).json'),
-    path.join(__dirname, '..', '..', 'config.json'),
-    path.join(__dirname, '..', 'config.json'),
-    path.join(__dirname, '..', 'config', 'config.json'),
-  ];
-  for (const configPath of paths) {
-    try {
-      if (fs.existsSync(configPath)) {
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        if (config && config.smsvendor) {
-          console.log('[OTP] Loaded smsvendor from', configPath);
-          return config.smsvendor;
-        }
-      }
-    } catch (e) {}
-  }
-  return '';
-}
-
-SMS_VENDOR_URL = loadSmsVendorUrl();
-if (process.env.NODE_ENV !== 'production') {
-  console.log('[OTP] SMS gateway:', SMS_VENDOR_URL ? 'configured' : 'NOT configured — no realtime SMS');
-}
 
 /* ───────── OTP Generator (4-digit, 1000–9999) per workflow spec ───────── */
 
@@ -49,12 +18,6 @@ function generateOTP() {
 }
 
 const OTP_EXPIRY_MINUTES = 5;
-
-/* ───────── SMS Message Template (must match DLT template t_id) ───────── */
-
-const SMS_MESSAGE_TEMPLATE =
-  process.env.OTP_SMS_MESSAGE ||
-  'Dear Applicant, Your OTP for Mobile No. Verification is {otp} . MJPTBCWREIS - EVOLGN';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -182,63 +145,6 @@ function extractMobile(body) {
   return { dial, digits };
 }
 
-function maskPhone(phone) {
-  if (!phone || phone.length < 6) return '***';
-  return phone.slice(0, 3) + '***' + phone.slice(-2);
-}
-
-/* ───────── SMS Sending (HTTP GET per workflow) ───────── */
-
-async function sendSMS(mobileNumber, otp) {
-  const gatewayUrl = SMS_VENDOR_URL || loadSmsVendorUrl();
-  if (!gatewayUrl) {
-    if (process.env.NODE_ENV !== 'production') {
-      console.log('[OTP] No SMS gateway; OTP for', maskPhone(mobileNumber), ':', otp);
-    }
-    return true;
-  }
-
-  let toNumber = String(mobileNumber).replace(/\D/g, '');
-  if (toNumber.length === 12 && toNumber.startsWith('91')) {
-    toNumber = toNumber.slice(2);
-  }
-  if (toNumber.length !== 10) {
-    console.error('[OTP] Invalid mobile number length:', toNumber.length, 'expected 10');
-  }
-
-  const message = SMS_MESSAGE_TEMPLATE
-    .replace(/\{otp\}/gi, otp)
-    .replace(/%s/g, otp);
-
-  if (process.env.NODE_ENV !== 'production') {
-    console.log('[OTP] Sending SMS to', maskPhone(toNumber), '| msg:', message);
-  }
-
-  const url = `${gatewayUrl}to_mobileno=${encodeURIComponent(toNumber)}&sms_text=${encodeURIComponent(message)}`;
-
-  try {
-    const res = await fetch(url, { method: 'GET' });
-    const text = await res.text();
-
-    if (process.env.NODE_ENV !== 'production') {
-      console.log('[OTP] Gateway response:', res.status, '| body:', String(text).slice(0, 500));
-    }
-
-    try {
-      const json = JSON.parse(text);
-      if (json.status === 'success') return true;
-    } catch (_) {}
-
-    if (text.toLowerCase().includes('success')) return true;
-
-    console.error('[OTP] SMS send failed. Response:', text);
-    return false;
-  } catch (err) {
-    console.error('[OTP] Gateway fetch error:', err.message);
-    return false;
-  }
-}
-
 /* ───────── Sample African test numbers (dev/test only) ─────────
  * Use these 10 numbers with their country code to test OTP login.
  * OTP for all: 1234
@@ -269,64 +175,6 @@ function getDevOtp(dial, digits, key) {
   return null;
 }
 
-function isProductionNodeEnv() {
-  return String(process.env.NODE_ENV || '').toLowerCase() === 'production';
-}
-
-/**
- * Delivers phone OTP via Twilio (SMS / WhatsApp) and/or the legacy HTTP SMS gateway in config.
- * The bundled gateway is India-oriented (10-digit); international numbers often fail unless Twilio is set.
- */
-async function deliverPhoneOtp({ dial, digits, otp, preferredChannel }) {
-  const ch = (preferredChannel || '').toLowerCase();
-  const isProd = isProductionNodeEnv();
-
-  const gatewayConfiguredButNotConfirmed = (legacySmsOk) => {
-    if (legacySmsOk || !SMS_VENDOR_URL) return false;
-    if (!isProd) {
-      console.warn(
-        '[OTP] Legacy SMS gateway did not return success. In non-production the OTP is still stored; use the `otp` field in the JSON response or server logs.'
-      );
-      return true;
-    }
-    return false;
-  };
-
-  if (ch === 'sms') {
-    const twSms = await sendOtpSmsOnly({ dial, digits, otp, appName: 'Mineral Bridge' }).catch(() => ({ ok: false }));
-    if (twSms && twSms.ok) return { ok: true, channel: twSms.channel || 'sms' };
-    const legacyOk = await sendSMS(digits, otp);
-    if (legacyOk) return { ok: true, channel: 'sms_gateway' };
-    if (gatewayConfiguredButNotConfirmed(legacyOk)) return { ok: true, channel: 'sms_gateway' };
-
-    if (!isProd) {
-      console.warn(
-        '[OTP] SMS path: no provider succeeded in development; OTP still issued (see JSON `otp` or logs).'
-      );
-      return { ok: true, channel: 'dev_local' };
-    }
-    return { ok: false };
-  }
-
-  const tw = await sendOtpWhatsAppFirst({ dial, digits, otp, appName: 'Mineral Bridge' }).catch((e) => ({
-    ok: false,
-    error: e,
-  }));
-  if (tw && tw.ok) return { ok: true, channel: tw.channel };
-  const legacyOk = await sendSMS(digits, otp);
-  if (legacyOk) return { ok: true, channel: 'sms_gateway' };
-  if (gatewayConfiguredButNotConfirmed(legacyOk)) return { ok: true, channel: 'sms_gateway' };
-
-  // Dev / local QA: WhatsApp/Twilio + legacy SMS often fail for non-local numbers — still issue OTP so the app works.
-  if (!isProd) {
-    console.warn(
-      '[OTP] No SMS/WhatsApp channel succeeded in development; OTP is still saved. Use JSON `otp` or server logs to sign in.'
-    );
-    return { ok: true, channel: 'dev_local' };
-  }
-  return { ok: false };
-}
-
 /* ═══════════════════════════════════════════════════════════
    ROUTES — OTP Flow (per OTP_PROCESS_WORKFLOW spec)
    ═══════════════════════════════════════════════════════════ */
@@ -354,13 +202,6 @@ router.post('/send-otp', async (req, res) => {
       }
 
       const key = getEmailOtpKey(emailLower);
-      const rl = await checkRateLimit(key);
-      if (rl.blocked) {
-        return res.status(429).json({
-          error: 'Too many OTP requests. Please try again later.',
-          retryAfter: rl.retryAfter,
-        });
-      }
 
       const db = getDB();
       const users = db.collection('users');
@@ -407,14 +248,6 @@ router.post('/send-otp', async (req, res) => {
 
     const key = getOtpKey(dial, digits);
 
-    const rl = await checkRateLimit(key);
-    if (rl.blocked) {
-      return res.status(429).json({
-        error: 'Too many OTP requests. Please try again later.',
-        retryAfter: rl.retryAfter,
-      });
-    }
-
     const db = getDB();
     const users = db.collection('users');
 
@@ -442,15 +275,22 @@ router.post('/send-otp', async (req, res) => {
     if (!delivered.ok) {
       return res.status(500).json({
         error: 'Failed to send OTP',
-        message:
-          'SMS or WhatsApp could not be delivered. Set Twilio env vars (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_SMS_FROM and/or TWILIO_WHATSAPP_FROM), use Email login, or configure a gateway that supports your country.',
+        message: deliveryFailureMessage(delivered.reason),
       });
     }
-    const channel = delivered.channel;
 
     await users.updateOne({ _id: user._id }, { $set: { otp, otpExpiry } });
 
-    res.json({ message: 'OTP sent successfully', channel });
+    res.json(
+      buildPhoneOtpSuccessPayload({
+        otp,
+        channel: delivered.channel,
+        expiresInMinutes: OTP_EXPIRY_MINUTES,
+        dial,
+        digits,
+        preferredChannel,
+      })
+    );
   } catch (err) {
     console.error('send-otp error:', err);
     res.status(500).json({ error: 'Failed to send OTP' });
@@ -628,14 +468,6 @@ router.post('/resend-otp', async (req, res) => {
     const key = emailLower ? getEmailOtpKey(emailLower) : getOtpKey(dial, digits);
     if (!key || (!emailLower && !digits)) return res.status(400).json({ error: emailLower ? 'Email required' : 'Mobile number required' });
 
-    const rl = await checkRateLimit(key);
-    if (rl.blocked) {
-      return res.status(429).json({
-        error: 'Too many OTP requests. Please try again later.',
-        retryAfter: rl.retryAfter,
-      });
-    }
-
     const db = getDB();
     const user = await db.collection('users').findOne({ phone: key });
 
@@ -663,8 +495,7 @@ router.post('/resend-otp', async (req, res) => {
       if (!delivered.ok) {
         return res.status(500).json({
           error: 'Failed to resend OTP',
-          message:
-            'SMS or WhatsApp could not be delivered. Set Twilio env vars or use Email login.',
+          message: deliveryFailureMessage(delivered.reason),
         });
       }
       channel = delivered.channel;
@@ -675,7 +506,20 @@ router.post('/resend-otp', async (req, res) => {
       { $set: { otp, otpExpiry } }
     );
 
-    res.json({ message: 'OTP resent successfully', channel });
+    if (emailLower) {
+      return res.json({ message: 'OTP resent successfully', channel, expiresInSeconds: OTP_EXPIRY_MINUTES * 60 });
+    }
+
+    return res.json(
+      buildPhoneOtpSuccessPayload({
+        otp,
+        channel,
+        expiresInMinutes: OTP_EXPIRY_MINUTES,
+        dial,
+        digits,
+        preferredChannel: phonePreferred,
+      })
+    );
   } catch (err) {
     console.error('resend-otp error:', err);
     res.status(500).json({ error: 'Failed to resend OTP' });

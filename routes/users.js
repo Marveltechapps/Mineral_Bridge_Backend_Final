@@ -3,6 +3,7 @@ const multer = require('multer');
 const { getDB } = require('../config/db');
 const { authMiddleware } = require('../middleware/auth');
 const { uploadToS3, presignedUrl } = require('../config/s3');
+const { isAllowedImageMime, normalizeImageContentType } = require('../lib/imageMime');
 
 const router = express.Router();
 
@@ -76,8 +77,8 @@ const avatarUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    if (['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) cb(null, true);
-    else cb(new Error('Avatar must be JPEG, PNG, or WebP'));
+    if (isAllowedImageMime(file.mimetype, file.originalname)) cb(null, true);
+    else cb(new Error(`Avatar must be an image (JPEG, PNG, WebP, or HEIC). Received: ${file.mimetype || 'unknown'}`));
   },
 });
 
@@ -85,18 +86,29 @@ const avatarUpload = multer({
  * PATCH /api/users/me/profile
  * Accepts multipart form with optional 'avatar' file, or JSON body with { avatarKey? }.
  */
-router.patch('/me/profile', authMiddleware, avatarUpload.single('avatar'), async (req, res) => {
+router.patch('/me/profile', authMiddleware, (req, res, next) => {
+  avatarUpload.single('avatar')(req, res, (err) => {
+    if (err) {
+      if (err instanceof multer.MulterError) {
+        return res.status(400).json({ error: err.message });
+      }
+      return res.status(400).json({ error: err.message || 'Invalid avatar upload' });
+    }
+    next();
+  });
+}, async (req, res) => {
   try {
     const db = getDB();
     const updates = { updatedAt: new Date() };
 
     if (req.file) {
+      const contentType = normalizeImageContentType(req.file.mimetype, req.file.originalname);
       const { key } = await uploadToS3(req.file.buffer, {
         module: 'more',
         folder: 'avatars',
         userId: req.user.id,
         filename: req.file.originalname,
-        contentType: req.file.mimetype,
+        contentType,
         scope: 'user',
       });
       updates.avatarKey = key;

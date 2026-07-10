@@ -120,7 +120,15 @@ function s3Url(key, scope = 'user') {
 }
 
 function mimeToExt(mime) {
-  const map = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'application/pdf': '.pdf' };
+  const map = {
+    'image/jpeg': '.jpg',
+    'image/jpg': '.jpg',
+    'image/png': '.png',
+    'image/webp': '.webp',
+    'image/heic': '.heic',
+    'image/heif': '.heif',
+    'application/pdf': '.pdf',
+  };
   return map[mime] || '.bin';
 }
 
