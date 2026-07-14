@@ -51,8 +51,41 @@ function loadSmsVendorUrl() {
 }
 
 const SMS_VENDOR_URL = loadSmsVendorUrl();
+
+function hasSmsGateway() {
+  return !!(SMS_VENDOR_URL || loadSmsVendorUrl());
+}
+
+function hasTwilioSms() {
+  return !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_SMS_FROM);
+}
+
+function hasTwilioWhatsApp() {
+  return !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_WHATSAPP_FROM);
+}
+
+/** Dev-only OTP when real SMS/WhatsApp delivery is unavailable or failed. */
+function allowDevLocalFallback({ afterDeliveryFailure = false } = {}) {
+  if (isProductionNodeEnv()) return false;
+  if (afterDeliveryFailure || isTruthyEnv('OTP_ALLOW_DEV_LOCAL_FALLBACK')) return true;
+  return !hasSmsGateway() && !hasTwilioSms() && !hasTwilioWhatsApp();
+}
+
 if (!isProductionNodeEnv()) {
-  console.log('[OTP] SMS gateway:', SMS_VENDOR_URL ? 'configured' : 'NOT configured — use Twilio or OTP_INCLUDE_IN_RESPONSE for local testing');
+  console.log('[OTP] SMS gateway:', hasSmsGateway() ? 'configured' : 'NOT configured — set SMS_VENDOR_URL or config/config.json');
+} else if (!hasSmsGateway() && !hasTwilioSms()) {
+  console.error(
+    '[OTP] WARNING: production API has no India SMS gateway (SMS_VENDOR_URL) and no Twilio SMS — phone OTP will fail for most users.'
+  );
+}
+
+function isCampaignGatewayResponse(text) {
+  const lower = String(text || '').toLowerCase();
+  return lower.includes('campaign') && (lower.includes('success') || lower.includes('sent'));
+}
+
+function allowCampaignGatewaySuccess() {
+  return isTruthyEnv('SMS_GATEWAY_ACCEPT_CAMPAIGN');
 }
 
 function buildSmsMessage(otp) {
@@ -94,12 +127,29 @@ async function sendLegacyIndiaSms(digits, otp) {
 
     try {
       const json = JSON.parse(text);
-      if (json.status === 'success') return { ok: true, channel: 'sms_gateway' };
+      if (json.status === 'success') {
+        if (isCampaignGatewayResponse(text) && !allowCampaignGatewaySuccess()) {
+          console.error(
+            '[OTP] India gateway accepted the request on a promotional/campaign route (SMS usually will not arrive). ' +
+              'Ask Spear UC for transactional OTP route, verify TWILIO_* for fallback, or set SMS_GATEWAY_ACCEPT_CAMPAIGN=1 to ignore.'
+          );
+          return { ok: false, reason: 'gateway_campaign_route', response: text };
+        }
+        return { ok: true, channel: 'sms_gateway' };
+      }
     } catch (_) {
       /* not JSON */
     }
 
     const lower = text.toLowerCase();
+    if (isCampaignGatewayResponse(text) && !allowCampaignGatewaySuccess()) {
+      console.error(
+        '[OTP] India gateway accepted the request on a promotional/campaign route (SMS usually will not arrive). ' +
+          'Ask Spear UC for transactional OTP route, verify TWILIO_* for fallback, or set SMS_GATEWAY_ACCEPT_CAMPAIGN=1 to ignore.'
+      );
+      return { ok: false, reason: 'gateway_campaign_route', response: text };
+    }
+
     if (lower.includes('success') || lower.includes('sent')) {
       return { ok: true, channel: 'sms_gateway' };
     }
@@ -114,54 +164,82 @@ async function sendLegacyIndiaSms(digits, otp) {
 
 /**
  * Deliver OTP to a phone number.
- * Priority: Twilio (SMS or WhatsApp) → India legacy gateway (+91 only) → dev fallback.
+ * India (+91) SMS: legacy gateway first (DLT), then Twilio.
+ * Other countries SMS: Twilio, then fail (or dev_local only when no providers configured).
  */
 async function deliverPhoneOtp({ dial, digits, otp, preferredChannel }) {
   const ch = String(preferredChannel || 'sms').toLowerCase();
-  const isProd = isProductionNodeEnv();
 
   if (ch === 'sms') {
-    const twSms = await sendOtpSmsOnly({ dial, digits, otp, appName: 'Mineral Bridge' }).catch((e) => ({
-      ok: false,
-      error: e,
-    }));
-    if (twSms?.ok) return { ok: true, channel: twSms.channel || 'sms', provider: 'twilio' };
-    if (twSms?.error) {
-      console.warn('[OTP] Twilio SMS failed:', twSms.error?.message || twSms.error);
-    }
-
     if (isIndiaDialCode(dial)) {
       const legacy = await sendLegacyIndiaSms(digits, otp);
-      if (legacy.ok) return { ok: true, channel: legacy.channel || 'sms_gateway', provider: 'legacy_gateway' };
-      if (!isProd) {
-        console.warn('[OTP] Legacy SMS gateway failed in development; OTP still issued for testing.');
+      if (legacy.ok) {
+        return { ok: true, channel: legacy.channel || 'sms_gateway', provider: 'legacy_gateway' };
+      }
+      if (hasTwilioSms()) {
+        const twSms = await sendOtpSmsOnly({ dial, digits, otp, appName: 'Mineral Bridge' }).catch((e) => ({
+          ok: false,
+          error: e,
+        }));
+        if (twSms?.ok) return { ok: true, channel: twSms.channel || 'sms', provider: 'twilio' };
+        if (twSms?.error) {
+          console.warn('[OTP] Twilio SMS failed after India gateway:', twSms.error?.message || twSms.error);
+        }
+      }
+      if (allowDevLocalFallback({ afterDeliveryFailure: true })) {
+        console.warn('[OTP] SMS providers failed; OTP issued for local testing only.');
         return { ok: true, channel: 'dev_local', provider: 'dev' };
       }
       return { ok: false, reason: legacy.reason || 'sms_delivery' };
     }
 
-    if (!isProd) {
-      console.warn('[OTP] International SMS without Twilio; OTP still issued for local testing.');
+    if (hasTwilioSms()) {
+      const twSms = await sendOtpSmsOnly({ dial, digits, otp, appName: 'Mineral Bridge' }).catch((e) => ({
+        ok: false,
+        error: e,
+      }));
+      if (twSms?.ok) return { ok: true, channel: twSms.channel || 'sms', provider: 'twilio' };
+      if (twSms?.error) {
+        console.warn('[OTP] Twilio SMS failed:', twSms.error?.message || twSms.error);
+      }
+    }
+
+    if (allowDevLocalFallback({ afterDeliveryFailure: true })) {
+      console.warn('[OTP] International SMS without working provider; OTP issued for local testing only.');
       return { ok: true, channel: 'dev_local', provider: 'dev' };
     }
     return { ok: false, reason: 'international_sms_requires_twilio' };
   }
 
-  const twWa = await sendOtpWhatsAppOnly({ dial, digits, otp, appName: 'Mineral Bridge' }).catch((e) => ({
-    ok: false,
-    error: e,
-  }));
-  if (twWa?.ok) return { ok: true, channel: twWa.channel || 'whatsapp', provider: 'twilio' };
-  if (twWa?.error) {
-    console.warn('[OTP] Twilio WhatsApp failed:', twWa.error?.message || twWa.error);
+  if (hasTwilioWhatsApp()) {
+    const twWa = await sendOtpWhatsAppOnly({ dial, digits, otp, appName: 'Mineral Bridge' }).catch((e) => ({
+      ok: false,
+      error: e,
+    }));
+    if (twWa?.ok) return { ok: true, channel: twWa.channel || 'whatsapp', provider: 'twilio' };
+    if (twWa?.error) {
+      console.warn('[OTP] Twilio WhatsApp failed:', twWa.error?.message || twWa.error);
+    }
   }
 
-  if (!isProd) {
-    console.warn('[OTP] WhatsApp delivery failed in development; OTP still issued for local testing.');
+  if (isIndiaDialCode(dial) && hasSmsGateway()) {
+    const legacy = await sendLegacyIndiaSms(digits, otp);
+    if (legacy.ok) {
+      return {
+        ok: true,
+        channel: legacy.channel || 'sms_gateway',
+        provider: 'legacy_gateway',
+        fallbackFrom: 'whatsapp',
+      };
+    }
+  }
+
+  if (allowDevLocalFallback({ afterDeliveryFailure: true })) {
+    console.warn('[OTP] WhatsApp delivery failed; OTP issued for local testing only.');
     return { ok: true, channel: 'dev_local', provider: 'dev' };
   }
 
-  return { ok: false, reason: 'whatsapp_delivery_failed', error: twWa?.error };
+  return { ok: false, reason: 'whatsapp_delivery_failed' };
 }
 
 function deliveryFailureMessage(reason) {
@@ -170,6 +248,8 @@ function deliveryFailureMessage(reason) {
       return 'WhatsApp OTP could not be sent. If using Twilio sandbox, open WhatsApp and send the join code to +1 415 523 8886 first, then try again. Otherwise confirm TWILIO_WHATSAPP_FROM is set for your WhatsApp sender.';
     case 'international_sms_requires_twilio':
       return 'SMS to this country requires Twilio (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_SMS_FROM). Try WhatsApp or Email login.';
+    case 'gateway_campaign_route':
+      return 'SMS was queued on a promotional route and may not arrive. For local testing, verify your number in Twilio Console (trial accounts) or ask Spear UC to enable transactional OTP for sender EVOLGN. You can also use Email login.';
     case 'gateway_rejected':
     case 'gateway_error':
     case 'sms_delivery':
@@ -232,4 +312,5 @@ module.exports = {
   shouldIncludeOtpInResponse,
   isIndiaDialCode,
   loadSmsVendorUrl,
+  hasSmsGateway,
 };

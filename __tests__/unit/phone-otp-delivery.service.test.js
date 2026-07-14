@@ -29,6 +29,10 @@ describe('phone-otp-delivery.service', () => {
       expect(deliveryFailureMessage('international_sms_requires_twilio')).toMatch(/Twilio/i);
     });
 
+    it('returns campaign-route hint for gateway campaign failures', () => {
+      expect(deliveryFailureMessage('gateway_campaign_route')).toMatch(/transactional|Twilio/i);
+    });
+
     it('returns DLT hint for gateway failures', () => {
       expect(deliveryFailureMessage('sms_delivery')).toMatch(/DLT/i);
     });

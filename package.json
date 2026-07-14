@@ -4,8 +4,8 @@
   "description": "Mineral Bridge API - Buy module minerals",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js",
+    "start": "node scripts/sync-sms-env-to-dotenv.js && node server.js",
+    "dev": "node scripts/sync-sms-env-to-dotenv.js && node server.js",
     "seed": "node seed/seed.js",
     "ensure-indexes": "node scripts/ensure-indexes.js",
     "migrate-db": "node scripts/migrate-mongo-mineral-bridge.js",
