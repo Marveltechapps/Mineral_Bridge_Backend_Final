@@ -30,6 +30,51 @@ function getClient() {
   return twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 }
 
+function twilioDeliveryError({ errorCode, errorMessage, status }) {
+  const code = Number(errorCode);
+  const msg = String(errorMessage || '').trim();
+  if (code === 21608) {
+    return new Error(
+      'SMS could not be sent: Twilio trial accounts only deliver to verified numbers. Verify the number in Twilio Console or use the India SMS route.'
+    );
+  }
+  if (code === 63015) {
+    return new Error(
+      'WhatsApp sandbox: open WhatsApp and send the join code to +1 415 523 8886 first, then try again.'
+    );
+  }
+  if (msg) return new Error(msg);
+  return new Error(`Message ${status || 'failed'} via Twilio`);
+}
+
+async function fetchTwilioMessageDelivery(messageSid) {
+  if (!messageSid || !canUseTwilio()) return { delivered: false, status: 'unknown' };
+  const client = getClient();
+  const delays = [300, 500, 700, 1000, 1200];
+  for (const ms of delays) {
+    await new Promise((r) => setTimeout(r, ms));
+    const msg = await client.messages(messageSid).fetch();
+    if (['delivered', 'sent', 'read'].includes(msg.status)) {
+      return { delivered: true, status: msg.status };
+    }
+    if (['failed', 'undelivered', 'canceled'].includes(msg.status)) {
+      return {
+        delivered: false,
+        status: msg.status,
+        errorCode: msg.errorCode,
+        errorMessage: msg.errorMessage,
+        error: twilioDeliveryError({
+          errorCode: msg.errorCode,
+          errorMessage: msg.errorMessage,
+          status: msg.status,
+        }),
+      };
+    }
+  }
+  // Still queued — treat as accepted (carrier may deliver shortly).
+  return { delivered: true, status: 'accepted' };
+}
+
 async function sendViaWhatsApp({ toE164, body }) {
   if (!canUseTwilio()) throw new Error('Twilio not configured');
   const from = process.env.TWILIO_WHATSAPP_FROM;
@@ -54,6 +99,15 @@ async function sendViaSms({ toE164, body }) {
   });
 }
 
+async function sendTwilioSmsWithDeliveryCheck({ toE164, body }) {
+  const msg = await sendViaSms({ toE164, body });
+  const delivery = await fetchTwilioMessageDelivery(msg?.sid);
+  if (!delivery.delivered) {
+    return { ok: false, error: delivery.error, errorCode: delivery.errorCode, messageSid: msg?.sid || null };
+  }
+  return { ok: true, channel: 'sms', messageSid: msg?.sid || null, toE164 };
+}
+
 /**
  * SMS-only OTP (Twilio). Use for the app's "Mobile / SMS" tab and as fallback for legacy gateways.
  * Returns { ok, channel?, messageSid?, error? }.
@@ -65,15 +119,42 @@ async function sendOtpSmsOnly({ dial, digits, otp, appName = 'Mineral Bridge' })
   try {
     const toE164 = buildE164(dial, digits);
     const body = `${appName}: Your login code is ${otp}. Expires in 5 minutes.`;
-    const msg = await sendViaSms({ toE164, body });
-    return { ok: true, channel: 'sms', messageSid: msg?.sid || null, toE164 };
+    return await sendTwilioSmsWithDeliveryCheck({ toE164, body });
   } catch (err) {
     return { ok: false, error: err };
   }
 }
 
 /**
- * WhatsApp-first OTP delivery with fallback.
+ * WhatsApp-only OTP delivery (no SMS fallback). Use when the user explicitly chose WhatsApp login.
+ * Returns { ok, channel?, messageSid?, error? }.
+ */
+async function sendOtpWhatsAppOnly({ dial, digits, otp, appName = 'Mineral Bridge' }) {
+  if (!canUseTwilio() || !process.env.TWILIO_WHATSAPP_FROM) {
+    return { ok: false, error: new Error('Twilio WhatsApp not configured (TWILIO_WHATSAPP_FROM)') };
+  }
+  try {
+    const toE164 = buildE164(dial, digits);
+    const body = `${appName}: Your login code is ${otp}. It expires in 5 minutes. Do not share this code.`;
+    const msg = await sendViaWhatsApp({ toE164, body });
+    const delivery = await fetchTwilioMessageDelivery(msg?.sid);
+    if (delivery.delivered) {
+      return { ok: true, channel: 'whatsapp', messageSid: msg?.sid || null, toE164 };
+    }
+    return {
+      ok: false,
+      channel: 'whatsapp',
+      messageSid: msg?.sid || null,
+      toE164,
+      error: delivery.error || new Error('WhatsApp message could not be delivered'),
+    };
+  } catch (err) {
+    return { ok: false, channel: 'whatsapp', messageSid: null, error: err };
+  }
+}
+
+/**
+ * WhatsApp-first OTP delivery with SMS fallback when sandbox/delivery fails.
  * Returns { ok, channel, messageSid? } where channel is "whatsapp" or "sms".
  */
 async function sendOtpWhatsAppFirst({ dial, digits, otp, appName = 'Mineral Bridge' }) {
@@ -81,15 +162,29 @@ async function sendOtpWhatsAppFirst({ dial, digits, otp, appName = 'Mineral Brid
   const waBody = `${appName}: Your login code is ${otp}. It expires in 5 minutes. Do not share this code.`;
   const smsBody = `${appName}: Your login code is ${otp}. Expires in 5 minutes.`;
 
-  // Try WhatsApp first
   try {
     const msg = await sendViaWhatsApp({ toE164, body: waBody });
-    return { ok: true, channel: 'whatsapp', messageSid: msg?.sid || null, toE164 };
-  } catch (err) {
-    // Fall back to SMS if configured
+    const delivery = await fetchTwilioMessageDelivery(msg?.sid);
+    if (delivery.delivered) {
+      return { ok: true, channel: 'whatsapp', messageSid: msg?.sid || null, toE164 };
+    }
     if (process.env.TWILIO_SMS_FROM) {
-      const msg = await sendViaSms({ toE164, body: smsBody });
-      return { ok: true, channel: 'sms', messageSid: msg?.sid || null, toE164 };
+      const sms = await sendTwilioSmsWithDeliveryCheck({ toE164, body: smsBody });
+      if (sms.ok) {
+        return { ...sms, fallbackFrom: 'whatsapp' };
+      }
+      return { ok: false, channel: 'whatsapp', messageSid: null, toE164, error: sms.error || delivery.error };
+    }
+    return { ok: false, channel: 'whatsapp', messageSid: null, toE164, error: delivery.error };
+  } catch (err) {
+    if (process.env.TWILIO_SMS_FROM) {
+      try {
+        const sms = await sendTwilioSmsWithDeliveryCheck({ toE164, body: smsBody });
+        if (sms.ok) return { ...sms, fallbackFrom: 'whatsapp' };
+        return { ok: false, channel: 'whatsapp', messageSid: null, toE164, error: sms.error || err };
+      } catch (smsErr) {
+        return { ok: false, channel: 'whatsapp', messageSid: null, toE164, error: smsErr };
+      }
     }
     return { ok: false, channel: 'whatsapp', messageSid: null, toE164, error: err };
   }
@@ -128,8 +223,8 @@ async function sendUserWhatsAppMessage({ phone, countryCode, body }) {
 module.exports = {
   buildE164,
   sendOtpSmsOnly,
+  sendOtpWhatsAppOnly,
   sendOtpWhatsAppFirst,
   sendUserSmsMessage,
   sendUserWhatsAppMessage,
 };
-

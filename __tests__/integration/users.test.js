@@ -111,6 +111,45 @@ describe('Users API', () => {
     });
   });
 
+  describe('PATCH /api/users/me/profile', () => {
+    const { uploadToS3 } = require('../../config/s3');
+
+    beforeEach(() => {
+      uploadToS3.mockClear();
+    });
+
+    it('accepts HEIC avatar uploads from iOS', async () => {
+      const res = await request(app)
+        .patch('/api/users/me/profile')
+        .set('Authorization', `Bearer ${token}`)
+        .attach('avatar', Buffer.from([0xff, 0xd8, 0xff, 0xe0]), {
+          filename: 'avatar.heic',
+          contentType: 'image/heic',
+        });
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('avatarUrl');
+      expect(uploadToS3).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        expect.objectContaining({ contentType: 'image/heic', folder: 'avatars' })
+      );
+    });
+
+    it('accepts octet-stream when filename is an image', async () => {
+      const res = await request(app)
+        .patch('/api/users/me/profile')
+        .set('Authorization', `Bearer ${token}`)
+        .attach('avatar', Buffer.from([0xff, 0xd8, 0xff, 0xe0]), {
+          filename: 'avatar.jpg',
+          contentType: 'application/octet-stream',
+        });
+      expect(res.status).toBe(200);
+      expect(uploadToS3).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        expect.objectContaining({ contentType: 'image/jpeg' })
+      );
+    });
+  });
+
   describe('GET /api/users/me/security', () => {
     it('returns security settings', async () => {
       const res = await request(app)

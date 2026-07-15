@@ -1,0 +1,3 @@
+{
+  "smsvendor": "https://your-sms-gateway.example.com/api?type=smsquicksend&user=YOUR_USER&pass=YOUR_PASS&sender=EVOLGN&t_id=YOUR_DLT_TEMPLATE_ID&"
+}
