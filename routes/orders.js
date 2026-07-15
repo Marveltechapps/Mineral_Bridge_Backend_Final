@@ -276,6 +276,7 @@ router.get('/', authMiddleware, async (req, res) => {
           extractionDate: o.extractionDate || null,
           extractionYear: o.extractionYear || null,
           sellPhotos: Array.isArray(o.sellPhotos) ? o.sellPhotos : [],
+          sentToUser: Array.isArray(o.sentToUser) ? o.sentToUser : [],
         };
         if (o.flowSteps != null) item.flowSteps = o.flowSteps;
         if (o.flowStepData != null) item.flowStepData = o.flowStepData;
@@ -335,6 +336,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
       extractionDate: order.extractionDate || null,
       extractionYear: order.extractionYear || null,
       sellPhotos: Array.isArray(order.sellPhotos) ? order.sellPhotos : [],
+      sentToUser: Array.isArray(order.sentToUser) ? order.sentToUser : [],
     };
     if (order.flowSteps != null) out.flowSteps = order.flowSteps;
     if (order.flowStepData != null) out.flowStepData = order.flowStepData;

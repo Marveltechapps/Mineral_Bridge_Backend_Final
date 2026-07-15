@@ -30,6 +30,9 @@ router.get('/me', authMiddleware, async (req, res) => {
       displayPhone = phoneKey.replace('|', ' ').trim();
     }
 
+    const loginCount = await db.collection('login_history').countDocuments({ userId: req.user.id });
+    const isFirstLogin = loginCount <= 1;
+
     res.json({
       ...req.user,
       isEmailLogin,
@@ -40,6 +43,8 @@ router.get('/me', authMiddleware, async (req, res) => {
       accountStatus: profile?.accountStatus || 'active',
       avatarKey: profile?.avatarKey || null,
       avatarUrl,
+      lastLocation: userDoc?.lastLocation || null,
+      isFirstLogin,
     });
   } catch (err) {
     console.error('GET /users/me error:', err);

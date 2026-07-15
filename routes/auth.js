@@ -555,6 +555,8 @@ router.post('/verify-otp', async (req, res) => {
 
     const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '';
     const ua = req.headers['user-agent'] || '';
+    const priorLoginCount = await db.collection('login_history').countDocuments({ userId: uid });
+    const isFirstLogin = priorLoginCount === 0;
     await db.collection('login_history').insertOne({
       userId: uid, ip, userAgent: ua, loggedInAt: new Date(),
     });
@@ -598,6 +600,7 @@ router.post('/verify-otp', async (req, res) => {
       accessToken: token,
       refreshToken: refresh.token,
       isVerified,
+      isFirstLogin,
       name: user.name || null,
       user: {
         id: uid,
