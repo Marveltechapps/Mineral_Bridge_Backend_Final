@@ -2,7 +2,7 @@ const { getRedis } = require('../config/redis');
 const { getDB } = require('../config/db');
 const { hashOTP, compareOTP } = require('../utils/hash');
 
-const OTP_TTL = parseInt(process.env.OTP_TTL_SECONDS, 10) || 300;
+const OTP_TTL = parseInt(process.env.OTP_TTL_SECONDS, 10) || 30;
 const RATE_LIMIT_MAX = parseInt(process.env.OTP_RATE_LIMIT_MAX, 10) || 3;
 const RATE_LIMIT_WINDOW = parseInt(process.env.OTP_RATE_LIMIT_WINDOW_SECONDS, 10) || 600;
 const BRUTE_FORCE_MAX = parseInt(process.env.OTP_BRUTE_FORCE_MAX, 10) || 5;

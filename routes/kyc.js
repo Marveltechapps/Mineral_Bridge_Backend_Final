@@ -5,17 +5,31 @@ const { getDB } = require('../config/db');
 const { authMiddleware } = require('../middleware/auth');
 const { uploadToS3, presignedUrl, deleteFromS3 } = require('../config/s3');
 const { detectFaceInImage } = require('../lib/faceCheck');
+const { isAllowedImageMime, normalizeImageContentType } = require('../lib/imageMime');
 
 const router = express.Router();
 
 const VALID_ID_TYPES = ['national-id', 'passport', 'corporate', 'driving-license'];
 
+function isAllowedKycFile(file) {
+  if (!file) return false;
+  const mime = String(file.mimetype || '').toLowerCase();
+  if (mime === 'application/pdf') return true;
+  if (isAllowedImageMime(file.mimetype, file.originalname)) return true;
+  // Extra document formats commonly produced by phones / scanners
+  if (['image/gif', 'image/bmp', 'image/x-ms-bmp', 'image/tiff'].includes(mime)) return true;
+  if ((!mime || mime === 'application/octet-stream') && /\.(gif|bmp|tiff?|pdf)$/i.test(file.originalname || '')) {
+    return true;
+  }
+  return false;
+}
+
 const kycUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    if (['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].includes(file.mimetype)) cb(null, true);
-    else cb(new Error(`Unsupported file type: ${file.mimetype}`));
+    if (isAllowedKycFile(file)) cb(null, true);
+    else cb(new Error(`Unsupported file type: ${file.mimetype || 'unknown'}. Use an image or PDF.`));
   },
 });
 
@@ -23,6 +37,7 @@ const kycFields = kycUpload.fields([
   { name: 'front', maxCount: 1 },
   { name: 'back', maxCount: 1 },
   { name: 'selfie', maxCount: 1 },
+  { name: 'liveFace', maxCount: 1 },
 ]);
 
 /**
@@ -31,13 +46,17 @@ const kycFields = kycUpload.fields([
  */
 async function uploadKycFile(file, userId, idType, side) {
   if (!file) return null;
+  const contentType =
+    file.mimetype === 'application/pdf'
+      ? 'application/pdf'
+      : normalizeImageContentType(file.mimetype, file.originalname);
   const { key } = await uploadToS3(file.buffer, {
     module: 'more',
     folder: 'kyc',
     subfolder: idType,
     userId,
-    filename: `${side}${require('path').extname(file.originalname) || '.jpg'}`,
-    contentType: file.mimetype,
+    filename: `${side}${require('path').extname(file.originalname) || (contentType === 'application/pdf' ? '.pdf' : '.jpg')}`,
+    contentType,
     scope: 'user',
   });
   return key;
@@ -60,9 +79,12 @@ router.post('/documents', authMiddleware, kycFields, async (req, res) => {
     const frontFile = req.files?.front?.[0] || null;
     const backFile = req.files?.back?.[0] || null;
     const selfieFile = req.files?.selfie?.[0] || null;
+    const liveFaceFile = req.files?.liveFace?.[0] || null;
 
-    if (selfieFile && selfieFile.buffer) {
-      const hasFace = await detectFaceInImage(selfieFile.buffer);
+    // Prefer live face for biometric check; fall back to selfie.
+    const faceFile = liveFaceFile || selfieFile;
+    if (faceFile && faceFile.buffer) {
+      const hasFace = await detectFaceInImage(faceFile.buffer);
       if (!hasFace) {
         return res.status(400).json({
           error: 'Only your live face is accepted. Please look at the camera with your face clearly visible. Photos, documents, or other objects cannot be used to unlock access.',
@@ -80,6 +102,9 @@ router.post('/documents', authMiddleware, kycFields, async (req, res) => {
     const selfieKey = selfieFile
       ? await uploadKycFile(selfieFile, req.user.id, normalized, 'selfie')
       : (req.body.selfieKey || null);
+    const liveFaceKey = liveFaceFile
+      ? await uploadKycFile(liveFaceFile, req.user.id, normalized, 'liveFace')
+      : (req.body.liveFaceKey || null);
 
     const db = getDB();
     const now = new Date();
@@ -87,6 +112,7 @@ router.post('/documents', authMiddleware, kycFields, async (req, res) => {
     if (frontKey) updateFields.frontKey = frontKey;
     if (backKey) updateFields.backKey = backKey;
     if (selfieKey) updateFields.selfieKey = selfieKey;
+    if (liveFaceKey) updateFields.liveFaceKey = liveFaceKey;
 
     const filter = { userId: req.user.id, idType: normalized };
     await db.collection('kyc_documents').updateOne(
@@ -105,15 +131,18 @@ router.post('/documents', authMiddleware, kycFields, async (req, res) => {
     const frontUrl = updated.frontKey ? await presignedUrl(updated.frontKey) : (updated.frontUrl || null);
     const backUrl = updated.backKey ? await presignedUrl(updated.backKey) : (updated.backUrl || null);
     const selfieUrl = updated.selfieKey ? await presignedUrl(updated.selfieKey) : (updated.selfieUrl || null);
+    const liveFaceUrl = updated.liveFaceKey ? await presignedUrl(updated.liveFaceKey) : (updated.liveFaceUrl || null);
 
     res.json({
       idType: updated.idType,
       frontKey: updated.frontKey || null,
       backKey: updated.backKey || null,
       selfieKey: updated.selfieKey || null,
+      liveFaceKey: updated.liveFaceKey || null,
       frontUrl,
       backUrl,
       selfieUrl,
+      liveFaceUrl,
       status: updated.status,
     });
   } catch (err) {
@@ -151,15 +180,19 @@ router.post('/submit', authMiddleware, async (req, res) => {
     // Require a complete set of documents before we move anything to "under_review".
     // This ensures the app never shows "Verified" until an admin approves it after review.
     const isDocComplete = (d) => {
+      const isPassport = d.idType === 'passport';
       const frontOk = !!(d.frontKey || d.frontUrl);
-      const backOk = !!(d.backKey || d.backUrl);
+      const backOk = isPassport || !!(d.backKey || d.backUrl);
       const selfieOk = !!(d.selfieKey || d.selfieUrl);
-      return frontOk && backOk && selfieOk;
+      const liveFaceOk = !!(d.liveFaceKey || d.liveFaceUrl);
+      // Accept legacy docs that predate liveFaceKey (selfie only).
+      const biometricsOk = liveFaceOk || (selfieOk && d.liveFaceKey === undefined && d.liveFaceUrl === undefined);
+      return frontOk && backOk && selfieOk && biometricsOk;
     };
     const incompleteDocs = docs.filter((d) => !isDocComplete(d));
     if (incompleteDocs.length) {
       return res.status(400).json({
-        error: 'Please upload the full KYC set before submitting (front, back, and selfie).',
+        error: 'Please upload the full KYC set before submitting (front, back, selfie, and live face photo).',
       });
     }
 
@@ -244,14 +277,17 @@ router.get('/status', authMiddleware, async (req, res) => {
       const frontUrl = d.frontKey ? await presignedUrl(d.frontKey) : (d.frontUrl || null);
       const backUrl = d.backKey ? await presignedUrl(d.backKey) : (d.backUrl || null);
       const selfieUrl = d.selfieKey ? await presignedUrl(d.selfieKey) : (d.selfieUrl || null);
+      const liveFaceUrl = d.liveFaceKey ? await presignedUrl(d.liveFaceKey) : (d.liveFaceUrl || null);
       return {
         idType: d.idType,
         frontKey: d.frontKey || null,
         backKey: d.backKey || null,
         selfieKey: d.selfieKey || null,
+        liveFaceKey: d.liveFaceKey || null,
         frontUrl,
         backUrl,
         selfieUrl,
+        liveFaceUrl,
         status: d.status,
         digitalIdentityHash: d.digitalIdentityHash,
       };

@@ -118,7 +118,7 @@ async function sendOtpSmsOnly({ dial, digits, otp, appName = 'Mineral Bridge' })
   }
   try {
     const toE164 = buildE164(dial, digits);
-    const body = `${appName}: Your login code is ${otp}. Expires in 5 minutes.`;
+    const body = `${appName}: Your login code is ${otp}. Expires in 30 seconds.`;
     return await sendTwilioSmsWithDeliveryCheck({ toE164, body });
   } catch (err) {
     return { ok: false, error: err };
@@ -133,23 +133,27 @@ async function sendOtpWhatsAppOnly({ dial, digits, otp, appName = 'Mineral Bridg
   if (!canUseTwilio() || !process.env.TWILIO_WHATSAPP_FROM) {
     return { ok: false, error: new Error('Twilio WhatsApp not configured (TWILIO_WHATSAPP_FROM)') };
   }
+  const toE164 = buildE164(dial, digits);
   try {
-    const toE164 = buildE164(dial, digits);
-    const body = `${appName}: Your login code is ${otp}. It expires in 5 minutes. Do not share this code.`;
+    console.log('[OTP] Sending WhatsApp OTP to', toE164, 'from', process.env.TWILIO_WHATSAPP_FROM);
+    const body = `${appName}: Your login code is ${otp}. It expires in 30 seconds. Do not share this code.`;
     const msg = await sendViaWhatsApp({ toE164, body });
     const delivery = await fetchTwilioMessageDelivery(msg?.sid);
     if (delivery.delivered) {
       return { ok: true, channel: 'whatsapp', messageSid: msg?.sid || null, toE164 };
     }
+    const detail = delivery.error || new Error('WhatsApp message could not be delivered');
+    console.warn('[OTP] WhatsApp not delivered to', toE164, '| status:', delivery.status, '|', detail.message);
     return {
       ok: false,
       channel: 'whatsapp',
       messageSid: msg?.sid || null,
       toE164,
-      error: delivery.error || new Error('WhatsApp message could not be delivered'),
+      error: detail,
     };
   } catch (err) {
-    return { ok: false, channel: 'whatsapp', messageSid: null, error: err };
+    console.warn('[OTP] WhatsApp send exception to', toE164, ':', err.message || err);
+    return { ok: false, channel: 'whatsapp', messageSid: null, toE164, error: err };
   }
 }
 
@@ -159,15 +163,25 @@ async function sendOtpWhatsAppOnly({ dial, digits, otp, appName = 'Mineral Bridg
  */
 async function sendOtpWhatsAppFirst({ dial, digits, otp, appName = 'Mineral Bridge' }) {
   const toE164 = buildE164(dial, digits);
-  const waBody = `${appName}: Your login code is ${otp}. It expires in 5 minutes. Do not share this code.`;
-  const smsBody = `${appName}: Your login code is ${otp}. Expires in 5 minutes.`;
+  const waBody = `${appName}: Your login code is ${otp}. It expires in 30 seconds. Do not share this code.`;
+  const smsBody = `${appName}: Your login code is ${otp}. Expires in 30 seconds.`;
 
   try {
+    console.log('[OTP] Sending WhatsApp OTP to', toE164, 'from', process.env.TWILIO_WHATSAPP_FROM);
     const msg = await sendViaWhatsApp({ toE164, body: waBody });
     const delivery = await fetchTwilioMessageDelivery(msg?.sid);
     if (delivery.delivered) {
+      console.log('[OTP] WhatsApp delivered to', toE164, '| status:', delivery.status);
       return { ok: true, channel: 'whatsapp', messageSid: msg?.sid || null, toE164 };
     }
+    console.warn(
+      '[OTP] WhatsApp not delivered to',
+      toE164,
+      '| status:',
+      delivery.status,
+      '|',
+      delivery.error?.message || delivery.errorMessage || 'unknown'
+    );
     if (process.env.TWILIO_SMS_FROM) {
       const sms = await sendTwilioSmsWithDeliveryCheck({ toE164, body: smsBody });
       if (sms.ok) {
@@ -177,6 +191,7 @@ async function sendOtpWhatsAppFirst({ dial, digits, otp, appName = 'Mineral Brid
     }
     return { ok: false, channel: 'whatsapp', messageSid: null, toE164, error: delivery.error };
   } catch (err) {
+    console.warn('[OTP] WhatsApp send exception to', toE164, ':', err.message || err);
     if (process.env.TWILIO_SMS_FROM) {
       try {
         const sms = await sendTwilioSmsWithDeliveryCheck({ toE164, body: smsBody });

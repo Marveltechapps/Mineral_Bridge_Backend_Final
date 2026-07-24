@@ -17,7 +17,7 @@ function generateOTP() {
   return Math.floor(1000 + Math.random() * 9000).toString();
 }
 
-const OTP_EXPIRY_MINUTES = 5;
+const OTP_EXPIRY_SECONDS = parseInt(process.env.OTP_TTL_SECONDS, 10) || 30;
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -46,7 +46,7 @@ function getEmailOtpKey(emailLower) {
 const EMAIL_OTP_SUBJECT = 'Your Mineral Bridge verification OTP';
 
 function buildEmailOtpHtml(otp) {
-  return `<p>Your Mineral Bridge one-time verification OTP is:</p><p style="font-size:24px;font-weight:700;letter-spacing:2px">${otp}</p><p>This code expires in ${OTP_EXPIRY_MINUTES} minutes.</p>`;
+  return `<p>Your Mineral Bridge one-time verification OTP is:</p><p style="font-size:24px;font-weight:700;letter-spacing:2px">${otp}</p><p>This code expires in ${OTP_EXPIRY_SECONDS} seconds.</p>`;
 }
 
 /** Resend (cloud) — set RESEND_API_KEY. */
@@ -226,7 +226,7 @@ router.post('/send-otp', async (req, res) => {
       }
 
       const otp = generateOTP();
-      const otpExpiry = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
+      const otpExpiry = new Date(Date.now() + OTP_EXPIRY_SECONDS * 1000);
       const ok = await sendEmailOtp(emailLower, otp);
       if (!ok) {
         return res.status(503).json({
@@ -237,7 +237,11 @@ router.post('/send-otp', async (req, res) => {
       }
 
       await users.updateOne({ _id: user._id }, { $set: { otp, otpExpiry } });
-      return res.json({ message: 'OTP sent successfully', channel: 'email' });
+      return res.json({
+        message: 'OTP sent successfully',
+        channel: 'email',
+        expiresInSeconds: OTP_EXPIRY_SECONDS,
+      });
     }
 
     const { dial, digits } = extractMobile(body);
@@ -269,7 +273,7 @@ router.post('/send-otp', async (req, res) => {
     }
 
     const otp = getDevOtp(dial, digits, key) || generateOTP();
-    const otpExpiry = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
+    const otpExpiry = new Date(Date.now() + OTP_EXPIRY_SECONDS * 1000);
 
     const delivered = await deliverPhoneOtp({ dial, digits, otp, preferredChannel });
     if (!delivered.ok) {
@@ -285,7 +289,7 @@ router.post('/send-otp', async (req, res) => {
       buildPhoneOtpSuccessPayload({
         otp,
         channel: delivered.channel,
-        expiresInMinutes: OTP_EXPIRY_MINUTES,
+        expiresInSeconds: OTP_EXPIRY_SECONDS,
         dial,
         digits,
         preferredChannel,
@@ -479,9 +483,10 @@ router.post('/resend-otp', async (req, res) => {
     }
 
     const otp = emailLower ? generateOTP() : (getDevOtp(dial, digits, key) || generateOTP());
-    const otpExpiry = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
+    const otpExpiry = new Date(Date.now() + OTP_EXPIRY_SECONDS * 1000);
 
     let channel = null;
+    let phonePreferred = (body.preferredChannel || 'whatsapp').toLowerCase();
     if (emailLower) {
       const ok = await sendEmailOtp(emailLower, otp);
       channel = 'email';
@@ -493,7 +498,6 @@ router.post('/resend-otp', async (req, res) => {
         });
       }
     } else {
-      const phonePreferred = (body.preferredChannel || 'whatsapp').toLowerCase();
       const delivered = await deliverPhoneOtp({ dial, digits, otp, preferredChannel: phonePreferred });
       if (!delivered.ok) {
         return res.status(500).json({
@@ -510,14 +514,14 @@ router.post('/resend-otp', async (req, res) => {
     );
 
     if (emailLower) {
-      return res.json({ message: 'OTP resent successfully', channel, expiresInSeconds: OTP_EXPIRY_MINUTES * 60 });
+      return res.json({ message: 'OTP resent successfully', channel, expiresInSeconds: OTP_EXPIRY_SECONDS });
     }
 
     return res.json(
       buildPhoneOtpSuccessPayload({
         otp,
         channel,
-        expiresInMinutes: OTP_EXPIRY_MINUTES,
+        expiresInSeconds: OTP_EXPIRY_SECONDS,
         dial,
         digits,
         preferredChannel: phonePreferred,

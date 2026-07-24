@@ -1,10 +1,10 @@
 const path = require('path');
 const fs = require('fs');
-const { sendOtpSmsOnly, sendOtpWhatsAppOnly } = require('./twilio-otp.service');
+const { sendOtpSmsOnly, sendOtpWhatsAppFirst } = require('./twilio-otp.service');
 
 const SMS_MESSAGE_TEMPLATE =
   process.env.OTP_SMS_MESSAGE ||
-  'Mineral Bridge: Your login code is %s. Valid for 5 minutes.';
+  'Mineral Bridge: Your login code is %s. Valid for 30 seconds.';
 
 function isTruthyEnv(name) {
   return ['1', 'true', 'yes'].includes(String(process.env[name] || '').trim().toLowerCase());
@@ -188,6 +188,7 @@ async function deliverPhoneOtp({ dial, digits, otp, preferredChannel }) {
       }
       if (allowDevLocalFallback({ afterDeliveryFailure: true })) {
         console.warn('[OTP] SMS providers failed; OTP issued for local testing only.');
+        console.log('[OTP] Local testing code for', maskPhone(digits), ':', otp);
         return { ok: true, channel: 'dev_local', provider: 'dev' };
       }
       return { ok: false, reason: legacy.reason || 'sms_delivery' };
@@ -206,19 +207,44 @@ async function deliverPhoneOtp({ dial, digits, otp, preferredChannel }) {
 
     if (allowDevLocalFallback({ afterDeliveryFailure: true })) {
       console.warn('[OTP] International SMS without working provider; OTP issued for local testing only.');
+      console.log('[OTP] Local testing code for', maskPhone(digits), ':', otp);
       return { ok: true, channel: 'dev_local', provider: 'dev' };
     }
     return { ok: false, reason: 'international_sms_requires_twilio' };
   }
 
   if (hasTwilioWhatsApp()) {
-    const twWa = await sendOtpWhatsAppOnly({ dial, digits, otp, appName: 'Mineral Bridge' }).catch((e) => ({
+    const twWa = await sendOtpWhatsAppFirst({ dial, digits, otp, appName: 'Mineral Bridge' }).catch((e) => ({
       ok: false,
       error: e,
     }));
-    if (twWa?.ok) return { ok: true, channel: twWa.channel || 'whatsapp', provider: 'twilio' };
+    if (twWa?.ok) {
+      if (twWa.fallbackFrom === 'whatsapp' && twWa.channel === 'sms') {
+        console.log('[OTP] WhatsApp unavailable; OTP sent via SMS fallback to', maskPhone(digits));
+      }
+      return {
+        ok: true,
+        channel: twWa.channel || 'whatsapp',
+        provider: 'twilio',
+        fallbackFrom: twWa.fallbackFrom,
+      };
+    }
     if (twWa?.error) {
       console.warn('[OTP] Twilio WhatsApp failed:', twWa.error?.message || twWa.error);
+    }
+  }
+
+  if (hasTwilioSms()) {
+    const twSms = await sendOtpSmsOnly({ dial, digits, otp, appName: 'Mineral Bridge' }).catch((e) => ({
+      ok: false,
+      error: e,
+    }));
+    if (twSms?.ok) {
+      console.log('[OTP] WhatsApp failed; OTP sent via SMS to', maskPhone(digits));
+      return { ok: true, channel: twSms.channel || 'sms', provider: 'twilio', fallbackFrom: 'whatsapp' };
+    }
+    if (twSms?.error) {
+      console.warn('[OTP] Twilio SMS fallback failed:', twSms.error?.message || twSms.error);
     }
   }
 
@@ -236,6 +262,7 @@ async function deliverPhoneOtp({ dial, digits, otp, preferredChannel }) {
 
   if (allowDevLocalFallback({ afterDeliveryFailure: true })) {
     console.warn('[OTP] WhatsApp delivery failed; OTP issued for local testing only.');
+    console.log('[OTP] Local testing code for', maskPhone(digits), ':', otp);
     return { ok: true, channel: 'dev_local', provider: 'dev' };
   }
 
@@ -245,7 +272,7 @@ async function deliverPhoneOtp({ dial, digits, otp, preferredChannel }) {
 function deliveryFailureMessage(reason) {
   switch (reason) {
     case 'whatsapp_delivery_failed':
-      return 'WhatsApp OTP could not be sent. If using Twilio sandbox, open WhatsApp and send the join code to +1 415 523 8886 first, then try again. Otherwise confirm TWILIO_WHATSAPP_FROM is set for your WhatsApp sender.';
+      return 'WhatsApp OTP could not be sent. The phone number you entered in the app must be the same WhatsApp number that joined the Twilio sandbox (the one that received “You are all set!”). Check country code + number, then try again.';
     case 'international_sms_requires_twilio':
       return 'SMS to this country requires Twilio (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_SMS_FROM). Try WhatsApp or Email login.';
     case 'gateway_campaign_route':
@@ -275,7 +302,7 @@ function shouldIncludeOtpInResponse({ dial, digits, channel }) {
 
 function deliveryWarningForChannel(channel, preferredChannel) {
   if (channel === 'dev_local') {
-    return 'OTP was not sent by SMS/WhatsApp (no provider available). Use the code shown below or check the server log.';
+    return 'WhatsApp/SMS could not be delivered (Twilio sandbox: join via WhatsApp to +1 415 523 8886, or use a sample test number). Your code is shown below.';
   }
   if (channel === 'sms_gateway') {
     return 'SMS was submitted to the India gateway. Delivery can take up to a minute. If you do not receive it, try Email login.';
@@ -286,7 +313,7 @@ function deliveryWarningForChannel(channel, preferredChannel) {
 function buildPhoneOtpSuccessPayload({
   otp,
   channel,
-  expiresInMinutes = 5,
+  expiresInSeconds = parseInt(process.env.OTP_TTL_SECONDS, 10) || 30,
   dial,
   digits,
   preferredChannel,
@@ -294,7 +321,7 @@ function buildPhoneOtpSuccessPayload({
   const payload = {
     message: 'OTP sent successfully',
     channel,
-    expiresInSeconds: expiresInMinutes * 60,
+    expiresInSeconds,
   };
   const warning = deliveryWarningForChannel(channel, preferredChannel);
   if (warning) payload.deliveryWarning = warning;

@@ -6,7 +6,7 @@ const { authMiddleware } = require('../middleware/auth');
 const router = express.Router();
 
 const DEFAULTS = {
-  language: 'English (US)',
+  language: 'English',
   currency: 'USD ($)',
   theme: 'System',
   defaultUnit: 'kg',

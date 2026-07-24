@@ -16,6 +16,105 @@ function usageMongoFilter(usage) {
   return { $or: [{ usage: 'delivery' }, { usage: { $exists: false } }, { usage: null }] };
 }
 
+function isNumericOnlyText(value) {
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed) return false;
+  return !/[\p{L}]/u.test(trimmed);
+}
+
+function isAddressText(value, { min = 2, max = 120 } = {}) {
+  const trimmed = String(value ?? '').trim();
+  if (trimmed.length < min || trimmed.length > max) return false;
+  if (isNumericOnlyText(trimmed)) return false;
+  return /^[\p{L}\p{M}0-9 .,'#/\-]+$/u.test(trimmed);
+}
+
+function isStreetAddress(value) {
+  const trimmed = String(value ?? '').trim();
+  if (trimmed.length < 3 || trimmed.length > 200) return false;
+  if (isNumericOnlyText(trimmed)) return false;
+  return /[\p{L}]/u.test(trimmed);
+}
+
+function isPostalCode(value) {
+  const normalized = String(value ?? '').trim();
+  if (!normalized) return false;
+  const compact = normalized.replace(/[\s-]/g, '');
+  return /^[A-Za-z0-9]{3,12}$/.test(compact);
+}
+
+function validateAddressBody(body, { partial = false } = {}) {
+  const fields = {};
+  const get = (key, alt) => (body[key] !== undefined ? body[key] : body[alt]);
+
+  const label = body.label !== undefined ? String(body.label || '').trim() : undefined;
+  const facilityName =
+    body.facilityName !== undefined ? String(body.facilityName || '').trim() : undefined;
+  const street = body.street !== undefined ? String(body.street || '').trim() : undefined;
+  const city = body.city !== undefined ? String(body.city || '').trim() : undefined;
+  const stateRaw = get('state', 'stateRegion');
+  const state = stateRaw !== undefined ? String(stateRaw || '').trim() : undefined;
+  const country = body.country !== undefined ? String(body.country || '').trim() : undefined;
+  const postalCode = body.postalCode !== undefined ? String(body.postalCode || '').trim() : undefined;
+
+  const requireField = (present, key, message) => {
+    if (!partial || present !== undefined) {
+      if (!present) fields[key] = message;
+    }
+  };
+
+  if (!partial) {
+    requireField(label, 'label', 'Label is required.');
+    requireField(street, 'street', 'Street address is required.');
+    requireField(city, 'city', 'City is required.');
+    requireField(state, 'region', 'Region / state is required.');
+    requireField(postalCode, 'postal', 'Postal code is required.');
+    requireField(country, 'country', 'Country is required.');
+  }
+
+  if (label !== undefined && label && !isAddressText(label, { min: 2, max: 80 })) {
+    fields.label = 'Enter a label with letters (not numbers only).';
+  }
+  if (facilityName !== undefined && facilityName && !isAddressText(facilityName, { min: 2, max: 120 })) {
+    fields.facility = 'Facility name must include letters (not numbers only).';
+  }
+  if (street !== undefined && (!street || !isStreetAddress(street))) {
+    fields.street = street
+      ? 'Enter a street address with a name (not numbers only).'
+      : 'Street address is required.';
+  }
+  if (city !== undefined && (!city || !isAddressText(city))) {
+    fields.city = city ? 'Enter a valid city name (not numbers only).' : 'City is required.';
+  }
+  if (state !== undefined && (!state || !isAddressText(state))) {
+    fields.region = state ? 'Enter a valid region or state (not numbers only).' : 'Region / state is required.';
+  }
+  if (postalCode !== undefined && (!postalCode || !isPostalCode(postalCode))) {
+    fields.postal = postalCode
+      ? 'Enter a valid postal code (3–12 letters or digits).'
+      : 'Postal code is required.';
+  }
+  if (country !== undefined && (!country || !isAddressText(country))) {
+    fields.country = country ? 'Enter a valid country name (not numbers only).' : 'Country is required.';
+  }
+
+  // Map region error key for API consumers that use `state`
+  if (fields.region) fields.state = fields.region;
+
+  return {
+    fields,
+    normalized: {
+      label,
+      facilityName,
+      street,
+      city,
+      state,
+      country,
+      postalCode,
+    },
+  };
+}
+
 /**
  * GET /api/addresses
  * Query: ?usage=delivery | ?usage=pickup — filter list. Omit query to return all (e.g. profile).
@@ -69,15 +168,13 @@ router.get('/', authMiddleware, async (req, res) => {
  */
 router.post('/', authMiddleware, async (req, res) => {
   try {
+    const body = req.body || {};
+    const { fields, normalized } = validateAddressBody(body, { partial: false });
+    if (Object.keys(fields).length) {
+      return res.status(400).json({ error: 'Validation failed', fields });
+    }
+
     const {
-      label,
-      facilityName,
-      street,
-      city,
-      state,
-      stateRegion,
-      country,
-      postalCode,
       phone,
       email,
       countryCode,
@@ -86,10 +183,8 @@ router.post('/', authMiddleware, async (req, res) => {
       regulatoryCompliance,
       isDefault,
       usage: usageRaw,
-    } = req.body || {};
-    if (!street || !city || !country) {
-      return res.status(400).json({ error: 'street, city, and country are required' });
-    }
+    } = body;
+
     const db = getDB();
     const usage = normalizeUsage(usageRaw);
     const sameUsageScope = { userId: req.user.id, ...usageMongoFilter(usage) };
@@ -97,13 +192,13 @@ router.post('/', authMiddleware, async (req, res) => {
     const doc = {
       userId: req.user.id,
       usage,
-      label: label || 'Address',
-      facilityName: facilityName || '',
-      street,
-      city,
-      state: state || stateRegion || '',
-      country,
-      postalCode: postalCode || '',
+      label: normalized.label || 'Address',
+      facilityName: normalized.facilityName || '',
+      street: normalized.street,
+      city: normalized.city,
+      state: normalized.state || '',
+      country: normalized.country,
+      postalCode: normalized.postalCode || '',
       phone: phone || '',
       email: email || '',
       countryCode: countryCode || null,
@@ -151,15 +246,8 @@ router.patch('/:id', authMiddleware, async (req, res) => {
   try {
     const id = req.params.id;
     if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid address id' });
+    const body = req.body || {};
     const {
-      label,
-      facilityName,
-      street,
-      city,
-      state,
-      stateRegion,
-      country,
-      postalCode,
       phone,
       email,
       countryCode,
@@ -168,17 +256,28 @@ router.patch('/:id', authMiddleware, async (req, res) => {
       regulatoryCompliance,
       isDefault,
       usage: usageBody,
-    } = req.body || {};
+    } = body;
+
+    let normalizedAddress = null;
+    if (addressFieldsProvided) {
+      const { fields, normalized } = validateAddressBody(body, { partial: true });
+      if (Object.keys(fields).length) {
+        return res.status(400).json({ error: 'Validation failed', fields });
+      }
+      normalizedAddress = normalized;
+    }
+
     const db = getDB();
     const updates = {};
-    if (label !== undefined) updates.label = label;
-    if (facilityName !== undefined) updates.facilityName = facilityName;
-    if (street !== undefined) updates.street = street;
-    if (city !== undefined) updates.city = city;
-    if (state !== undefined) updates.state = state;
-    else if (stateRegion !== undefined) updates.state = stateRegion;
-    if (country !== undefined) updates.country = country;
-    if (postalCode !== undefined) updates.postalCode = postalCode;
+    if (normalizedAddress) {
+      if (body.label !== undefined) updates.label = normalizedAddress.label;
+      if (body.facilityName !== undefined) updates.facilityName = normalizedAddress.facilityName;
+      if (body.street !== undefined) updates.street = normalizedAddress.street;
+      if (body.city !== undefined) updates.city = normalizedAddress.city;
+      if (body.state !== undefined || body.stateRegion !== undefined) updates.state = normalizedAddress.state;
+      if (body.country !== undefined) updates.country = normalizedAddress.country;
+      if (body.postalCode !== undefined) updates.postalCode = normalizedAddress.postalCode;
+    }
     if (phone !== undefined) updates.phone = phone;
     if (email !== undefined) updates.email = email;
     if (countryCode !== undefined) updates.countryCode = countryCode;

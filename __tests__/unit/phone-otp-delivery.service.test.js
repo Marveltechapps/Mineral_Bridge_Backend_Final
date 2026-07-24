@@ -59,6 +59,7 @@ describe('phone-otp-delivery.service', () => {
   describe('buildPhoneOtpSuccessPayload', () => {
     it('adds otp field in development', () => {
       process.env.NODE_ENV = 'development';
+      delete process.env.OTP_TTL_SECONDS;
       const payload = buildPhoneOtpSuccessPayload({
         otp: '1234',
         channel: 'dev_local',
@@ -67,7 +68,7 @@ describe('phone-otp-delivery.service', () => {
       });
       expect(payload.otp).toBe('1234');
       expect(payload.channel).toBe('dev_local');
-      expect(payload.expiresInSeconds).toBe(300);
+      expect(payload.expiresInSeconds).toBe(30);
     });
 
     it('omits otp field in production unless allowed', () => {

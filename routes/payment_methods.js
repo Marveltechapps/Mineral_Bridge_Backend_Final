@@ -5,6 +5,69 @@ const { authMiddleware } = require('../middleware/auth');
 
 const router = express.Router();
 
+const SWIFT_RE = /^[A-Za-z]{4}[A-Za-z]{2}[A-Za-z0-9]{2}([A-Za-z0-9]{3})?$/;
+const ACCOUNT_RE = /^\d{6,34}$/;
+const HOLDER_RE = /^[\p{L}\p{M} .'-]+$/u;
+const TRC20_RE = /^T[1-9A-HJ-NP-Za-km-z]{33}$/;
+const EVM_RE = /^0x[a-fA-F0-9]{40}$/;
+
+function normalizeAccountNumber(value) {
+  return String(value ?? '').replace(/[\s-]/g, '');
+}
+
+function validateBankBody(body) {
+  const fields = {};
+  const holderName = String(body.holderName || '').trim();
+  const bankName = String(body.bankName || '').trim();
+  const accountNumber = normalizeAccountNumber(body.accountNumber);
+  const swift = String(body.swift || '').trim().toUpperCase();
+
+  if (!holderName) fields.holderName = 'Account holder name is required.';
+  else if (holderName.length < 2) fields.holderName = 'Enter the full account holder name.';
+  else if (!HOLDER_RE.test(holderName)) fields.holderName = 'Name may only include letters, spaces, and . \' -';
+
+  if (!bankName) fields.bankName = 'Bank name is required.';
+  else if (bankName.length < 2) fields.bankName = 'Enter a valid bank name.';
+
+  if (!accountNumber) fields.accountNumber = 'Account number is required.';
+  else if (!ACCOUNT_RE.test(accountNumber)) fields.accountNumber = 'Enter a valid account number (6–34 digits).';
+
+  if (swift && !SWIFT_RE.test(swift)) {
+    fields.swift = 'Enter a valid SWIFT/BIC (8 or 11 characters), or leave blank.';
+  }
+
+  return {
+    fields,
+    normalized: { holderName, bankName, accountNumber, swift },
+  };
+}
+
+function validateCryptoBody(body) {
+  const fields = {};
+  const label = String(body.label || '').trim();
+  const network = String(body.network || '').trim();
+  const address = String(body.address || '').trim();
+
+  if (!label) fields.label = 'Wallet label is required.';
+  else if (label.length < 2) fields.label = 'Enter a wallet label.';
+
+  if (!network) fields.network = 'Select a network.';
+
+  if (!address) fields.address = 'Wallet address is required.';
+  else if (network.toUpperCase() === 'TRC-20' && !TRC20_RE.test(address)) {
+    fields.address = 'Enter a valid TRC-20 address.';
+  } else if (['ERC-20', 'BEP-20'].includes(network.toUpperCase()) && !EVM_RE.test(address)) {
+    fields.address = `Enter a valid ${network} address.`;
+  } else if (address.length < 20) {
+    fields.address = 'Enter a valid wallet address.';
+  }
+
+  return {
+    fields,
+    normalized: { label, network, address },
+  };
+}
+
 /**
  * GET /api/payment-methods
  */
@@ -50,19 +113,56 @@ router.post('/', authMiddleware, async (req, res) => {
     const doc = {
       userId: req.user.id,
       type,
+      // New methods stay unverified until 2FA / ops confirmation (required for withdrawals).
       verified: false,
       createdAt: new Date(),
     };
+
     if (type === 'Bank') {
-      doc.holderName = body.holderName || '';
-      doc.bankName = body.bankName || '';
-      doc.accountNumber = body.accountNumber || '';
-      doc.swift = body.swift || '';
+      const { fields, normalized } = validateBankBody(body);
+      if (Object.keys(fields).length) {
+        return res.status(400).json({ error: 'Validation failed', fields });
+      }
+
+      const duplicate = await db.collection('payment_methods').findOne({
+        userId: req.user.id,
+        type: 'Bank',
+        accountNumber: normalized.accountNumber,
+      });
+      if (duplicate) {
+        return res.status(409).json({
+          error: 'This bank account is already linked to your profile.',
+          fields: { accountNumber: 'This account number is already linked.' },
+        });
+      }
+
+      doc.holderName = normalized.holderName;
+      doc.bankName = normalized.bankName;
+      doc.accountNumber = normalized.accountNumber;
+      doc.swift = normalized.swift;
     } else {
-      doc.label = body.label || '';
-      doc.network = body.network || '';
-      doc.address = body.address || '';
+      const { fields, normalized } = validateCryptoBody(body);
+      if (Object.keys(fields).length) {
+        return res.status(400).json({ error: 'Validation failed', fields });
+      }
+
+      const duplicate = await db.collection('payment_methods').findOne({
+        userId: req.user.id,
+        type: 'Crypto',
+        address: normalized.address,
+      });
+      if (duplicate) {
+        return res.status(409).json({
+          error: 'This wallet address is already linked to your profile.',
+          fields: { address: 'This wallet address is already linked.' },
+        });
+      }
+
+      doc.label = normalized.label;
+      doc.network = normalized.network;
+      doc.address = normalized.address;
     }
+
     const result = await db.collection('payment_methods').insertOne(doc);
     const inserted = await db.collection('payment_methods').findOne({ _id: result.insertedId });
     res.status(201).json({
